@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 
@@ -12,7 +14,9 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const pidFile = "/tmp/ffmpeg_serve.pid"
+func getPIDFile() string {
+	return filepath.Join(os.TempDir(), "ffmpeg_serve.pid")
+}
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
@@ -28,7 +32,7 @@ var startCmd = &cobra.Command{
 
 		// Write PID file
 		pid := os.Getpid()
-		if err := os.WriteFile(pidFile, []byte(strconv.Itoa(pid)), 0644); err != nil {
+		if err := os.WriteFile(getPIDFile(), []byte(strconv.Itoa(pid)), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write PID file: %v\n", err)
 			os.Exit(1)
 		}
@@ -50,6 +54,7 @@ var stopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop HTTP server",
 	Run: func(cmd *cobra.Command, args []string) {
+		pidFile := getPIDFile()
 		data, err := os.ReadFile(pidFile)
 		if err != nil {
 			fmt.Printf("Error reading PID file (is server running?): %v\n", err)
@@ -68,11 +73,20 @@ var stopCmd = &cobra.Command{
 			return
 		}
 
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			fmt.Printf("Failed to kill server (it may already be dead): %v\n", err)
+		if runtime.GOOS == "windows" {
+			if err := process.Kill(); err != nil {
+				fmt.Printf("Failed to kill server: %v\n", err)
+			} else {
+				fmt.Println("Server stopped.")
+				os.Remove(pidFile)
+			}
 		} else {
-			fmt.Println("Server stopped.")
-			os.Remove(pidFile)
+			if err := process.Signal(syscall.SIGTERM); err != nil {
+				fmt.Printf("Failed to kill server (it may already be dead): %v\n", err)
+			} else {
+				fmt.Println("Server stopped.")
+				os.Remove(pidFile)
+			}
 		}
 	},
 }

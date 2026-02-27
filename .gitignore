@@ -1,9 +1,11 @@
 # Compiled binaries
 ffmpeg-serve
+bin/
 
 # Output files / directories
 *_out/
 *_out.*
+gh/
 
 # Go workspace
 go.work
