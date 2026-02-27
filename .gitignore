@@ -1,0 +1,23 @@
+# Compiled binaries
+ffmpeg-serve
+
+# Output files / directories
+*_out/
+*_out.*
+
+# Go workspace
+go.work
+go.work.sum
+
+# OS Specific
+.DS_Store
+Thumbs.db
+
+# PID files
+*.pid
+
+# Temporary files
+tmp/
+ffmpeg_probe_*
+ffmpeg_in_*
+ffmpeg_out_*
