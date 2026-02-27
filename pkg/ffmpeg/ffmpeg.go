@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 )
 
 // FFmpeg handles FFmpeg operations.
@@ -17,13 +19,41 @@ type FFmpeg struct {
 
 // NewFFmpeg initializes the FFmpeg wrapper.
 func NewFFmpeg(gpuID int) (*FFmpeg, error) {
+	// 1. Try system PATH
 	ffmpegPath, err := exec.LookPath("ffmpeg")
 	if err != nil {
-		return nil, fmt.Errorf("ffmpeg not found: %w", err)
+		// 2. Try local directory (where this binary is)
+		if exe, err2 := os.Executable(); err2 == nil {
+			localPath := filepath.Join(filepath.Dir(exe), "ffmpeg")
+			if runtime.GOOS == "windows" {
+				localPath += ".exe"
+			}
+			if _, err3 := os.Stat(localPath); err3 == nil {
+				ffmpegPath = localPath
+			}
+		}
 	}
+
+	if ffmpegPath == "" {
+		return nil, fmt.Errorf("ffmpeg not found in PATH or local directory")
+	}
+
 	ffprobePath, err := exec.LookPath("ffprobe")
 	if err != nil {
-		return nil, fmt.Errorf("ffprobe not found: %w", err)
+		// 2. Try local directory
+		if exe, err2 := os.Executable(); err2 == nil {
+			localPath := filepath.Join(filepath.Dir(exe), "ffprobe")
+			if runtime.GOOS == "windows" {
+				localPath += ".exe"
+			}
+			if _, err3 := os.Stat(localPath); err3 == nil {
+				ffprobePath = localPath
+			}
+		}
+	}
+
+	if ffprobePath == "" {
+		return nil, fmt.Errorf("ffprobe not found in PATH or local directory")
 	}
 
 	return &FFmpeg{
