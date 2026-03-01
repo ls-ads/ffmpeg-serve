@@ -64,18 +64,24 @@ func NewFFmpeg(gpuID int) (*FFmpeg, error) {
 }
 
 // Process executes an FFmpeg command with the given arguments.
-func (f *FFmpeg) Process(ctx context.Context, inputPath string, outputPath string, args []string) error {
-	fullArgs := []string{"-y"}
+func (f *FFmpeg) Process(ctx context.Context, args []string) error {
+	var fullArgs []string
 
+	// We ONLY inject visible devices, NOT hwaccel cuda flag, to allow the caller to specify
+	// hwaccel flags specifically where they want them (e.g., input vs output contexts)
 	if f.gpuID >= 0 {
-		fullArgs = append(fullArgs, "-hwaccel", "cuda", "-hwaccel_device", fmt.Sprintf("%d", f.gpuID))
+		// Set CUDA_VISIBLE_DEVICES if a specific GPU is requested, rather than injecting FFmpeg args.
+		// This is safer and doesn't interfere with FFmpeg's strict argument ordering.
+		os.Setenv("CUDA_VISIBLE_DEVICES", fmt.Sprintf("%d", f.gpuID))
 	}
 
-	fullArgs = append(fullArgs, "-i", inputPath)
+	fullArgs = append(fullArgs, "-y")
 	fullArgs = append(fullArgs, args...)
-	fullArgs = append(fullArgs, outputPath)
 
 	cmd := exec.CommandContext(ctx, f.binaryPath, fullArgs...)
+
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -128,7 +134,13 @@ func (f *FFmpeg) ProcessBuffer(ctx context.Context, input []byte, args []string)
 	defer os.Remove(tmpOut.Name())
 	defer tmpOut.Close()
 
-	if err := f.Process(ctx, tmpIn.Name(), tmpOut.Name(), args); err != nil {
+	// The server handles the tmp files. To use Process, we must construct the list of args
+	// that includes the input and output since Process no longer does that automatically.
+	fullArgs := []string{"-i", tmpIn.Name()}
+	fullArgs = append(fullArgs, args...)
+	fullArgs = append(fullArgs, tmpOut.Name())
+
+	if err := f.Process(ctx, fullArgs); err != nil {
 		return nil, err
 	}
 

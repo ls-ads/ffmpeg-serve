@@ -108,8 +108,10 @@ func (s *Server) handleProcess(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	argsStr := r.URL.Query().Get("args")
-	args := []string{}
+	var args []string
 	if argsStr != "" {
+		// Handlers like runpod-ffmpeg send args separated by commas.
+		// Example: -c:v,libx264,-preset,fast
 		args = strings.Split(argsStr, ",")
 	}
 
