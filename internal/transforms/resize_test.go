@@ -5,26 +5,26 @@ import (
 	"testing"
 )
 
-func TestParseUpscaleParams(t *testing.T) {
+func TestParseResizeParams(t *testing.T) {
 	cases := []struct {
 		name string
 		in   map[string]any
-		want upscaleParams
+		want resizeParams
 		err  string
 	}{
-		{"empty", map[string]any{}, upscaleParams{}, ""},
+		{"empty", map[string]any{}, resizeParams{}, ""},
 		{"scale + method", map[string]any{"scale": float64(2), "method": "bicubic"},
-			upscaleParams{Scale: 2, Method: "bicubic"}, ""},
+			resizeParams{Scale: 2, Method: "bicubic"}, ""},
 		{"scale int coerces", map[string]any{"scale": 4},
-			upscaleParams{Scale: 4}, ""},
+			resizeParams{Scale: 4}, ""},
 		{"non-numeric scale", map[string]any{"scale": "two"},
-			upscaleParams{}, "must be a number"},
+			resizeParams{}, "must be a number"},
 		{"non-string method", map[string]any{"method": 4},
-			upscaleParams{}, "must be a string"},
+			resizeParams{}, "must be a string"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseUpscaleParams(tc.in)
+			got, err := parseResizeParams(tc.in)
 			if tc.err != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.err) {
 					t.Errorf("expected error containing %q, got %v", tc.err, err)
@@ -41,7 +41,7 @@ func TestParseUpscaleParams(t *testing.T) {
 	}
 }
 
-func TestUpscale_AllowedMethods(t *testing.T) {
+func TestResize_AllowedMethods(t *testing.T) {
 	for _, m := range []string{"lanczos", "bicubic", "bilinear", "neighbor"} {
 		if !allowedMethods[m] {
 			t.Errorf("expected %q in allowedMethods", m)

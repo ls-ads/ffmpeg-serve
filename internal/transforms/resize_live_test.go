@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-// Live: 64×64 PNG → 4× lanczos upscale. Asserts output dims are
+// Live: 64×64 PNG → 4× lanczos resize. Asserts output dims are
 // 256×256 and the format round-trips.
-func TestUpscale_LiveImage_4xLanczos(t *testing.T) {
+func TestResize_LiveImage_4xLanczos(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("ffmpeg not on PATH; live test skipped")
@@ -35,13 +35,13 @@ func TestUpscale_LiveImage_4xLanczos(t *testing.T) {
 	defer cancel()
 
 	req := Request{
-		Transform: "upscale",
+		Transform: "resize",
 		Params:    map[string]any{"scale": float64(4), "method": "lanczos"},
 		Media:     Media{InputB64: base64.StdEncoding.EncodeToString(in), Format: "png"},
 	}
-	outputs, err := upscale(ctx, ffmpeg, ffprobe, req)
+	outputs, err := resize(ctx, ffmpeg, ffprobe, req)
 	if err != nil {
-		t.Fatalf("upscale: %v", err)
+		t.Fatalf("resize: %v", err)
 	}
 	if len(outputs) != 1 {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
@@ -65,7 +65,7 @@ func TestUpscale_LiveImage_4xLanczos(t *testing.T) {
 }
 
 // Live: 2× nearest-neighbor on a small image (the pixel-art preset).
-func TestUpscale_LiveImage_NearestNeighbor(t *testing.T) {
+func TestResize_LiveImage_NearestNeighbor(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("ffmpeg not on PATH; live test skipped")
@@ -87,13 +87,13 @@ func TestUpscale_LiveImage_NearestNeighbor(t *testing.T) {
 	defer cancel()
 
 	req := Request{
-		Transform: "upscale",
+		Transform: "resize",
 		Params:    map[string]any{"scale": float64(2), "method": "neighbor"},
 		Media:     Media{InputB64: base64.StdEncoding.EncodeToString(in), Format: "png"},
 	}
-	outputs, err := upscale(ctx, ffmpeg, ffprobe, req)
+	outputs, err := resize(ctx, ffmpeg, ffprobe, req)
 	if err != nil {
-		t.Fatalf("upscale neighbor: %v", err)
+		t.Fatalf("resize neighbor: %v", err)
 	}
 	if len(outputs) != 1 {
 		t.Fatalf("expected 1 output, got %d", len(outputs))
@@ -101,7 +101,7 @@ func TestUpscale_LiveImage_NearestNeighbor(t *testing.T) {
 }
 
 // Live: audio rejected.
-func TestUpscale_LiveAudio_Rejected(t *testing.T) {
+func TestResize_LiveAudio_Rejected(t *testing.T) {
 	ffmpeg, err := exec.LookPath("ffmpeg")
 	if err != nil {
 		t.Skip("ffmpeg not on PATH; live test skipped")
@@ -123,11 +123,11 @@ func TestUpscale_LiveAudio_Rejected(t *testing.T) {
 	defer cancel()
 
 	req := Request{
-		Transform: "upscale",
+		Transform: "resize",
 		Params:    map[string]any{"scale": float64(2)},
 		Media:     Media{InputB64: base64.StdEncoding.EncodeToString(in), Format: "mp3"},
 	}
-	_, err = upscale(ctx, ffmpeg, ffprobe, req)
+	_, err = resize(ctx, ffmpeg, ffprobe, req)
 	if err == nil {
 		t.Fatal("expected error on audio")
 	}

@@ -19,7 +19,7 @@ import (
 // transform handler in-process (no HTTP), writes the output file.
 //
 // This is what `iosuite compress`, `iosuite reframe`, etc. subprocess
-// to. Mirrors `real-esrgan-serve upscale`'s shape: the same Go
+// to. Mirrors `real-esrgan-serve super-resolution`'s shape: the same Go
 // process that hosts the daemon also runs single-shot transforms
 // from the command line, sharing the handler code path.
 func Command() *cobra.Command {
@@ -127,14 +127,14 @@ func runOnce(ctx context.Context, name, inputPath, outputPath, paramsJSON, ffmpe
 }
 
 // derivedOutputPath builds <stem>_<verb>.<ext> alongside the input
-// when --output is omitted. Mirrors what `iosuite upscale` does for
-// real-esrgan-serve outputs.
+// when --output is omitted. Mirrors what `iosuite super-resolution`
+// does for real-esrgan-serve outputs.
 //
 // Examples:
 //   compress  photo.jpg            → photo_compressed.jpg
 //   reframe   video.mp4            → video_reframed.mp4
 //   convert   photo.jpg (to=webp)  → photo.webp   (extension changes)
-//   upscale   photo.png            → photo_upscaled.png
+//   resize    photo.png            → photo_resized.png
 func derivedOutputPath(input, verb, outputFormat string) string {
 	dir := filepath.Dir(input)
 	base := filepath.Base(input)
@@ -144,7 +144,7 @@ func derivedOutputPath(input, verb, outputFormat string) string {
 		"compress":  "_compressed",
 		"reframe":   "_reframed",
 		"normalize": "_normalized",
-		"upscale":   "_upscaled",
+		"resize":    "_resized",
 		"trim":      "_trimmed",
 		"speed":     "_speed",
 	}[verb]

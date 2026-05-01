@@ -7,24 +7,25 @@ import (
 )
 
 func init() {
-	Register("upscale", upscale)
+	Register("resize", resize)
 }
 
-// upscale resamples an image or video to a larger size using one of
+// resize resamples an image or video to a different size using one of
 // ffmpeg's classical kernels. This is the "fast, deterministic,
-// CPU-only, no-AI-budget" upscaler — `iosuite upscale` routes here
-// when the user passes `--method=lanczos|bicubic|bilinear|neighbor`.
-// The AI super-resolution path (real-esrgan / future SwinIR) lives
-// in real-esrgan-serve and is what `iosuite upscale` defaults to;
-// the two complement each other.
+// CPU-only, no-AI-budget" resizer — `iosuite resize` routes here.
+// The AI super-resolution path (Real-ESRGAN / future SwinIR) lives in
+// real-esrgan-serve and is a different verb (`super-resolution`); the
+// two complement each other rather than competing for the name.
 //
 // Params:
-//   scale  — multiplier on each axis. Float, default 4. Range
-//            [1.5, 16] — below 1.5 is barely worth the re-encode,
-//            above 16 produces buffers nobody can afford.
-//   method — kernel name. "lanczos" (default), "bicubic", "bilinear",
-//            "neighbor" (nearest-neighbor; for pixel art).
-type upscaleParams struct {
+//
+//	scale  — multiplier on each axis. Float, default 4. Range
+//	         [0.1, 16] — below 0.1 collapses to a tiny buffer,
+//	         above 16 produces buffers nobody can afford. Values
+//	         under 1 downscale.
+//	method — kernel name. "lanczos" (default), "bicubic", "bilinear",
+//	         "neighbor" (nearest-neighbor; for pixel art).
+type resizeParams struct {
 	Scale  float64 `json:"scale,omitempty"`
 	Method string  `json:"method,omitempty"`
 }
@@ -38,17 +39,17 @@ var allowedMethods = map[string]bool{
 	"neighbor": true,
 }
 
-func upscale(ctx context.Context, ffmpegBin, ffprobeBin string, req Request) ([]Output, error) {
-	params, err := parseUpscaleParams(req.Params)
+func resize(ctx context.Context, ffmpegBin, ffprobeBin string, req Request) ([]Output, error) {
+	params, err := parseResizeParams(req.Params)
 	if err != nil {
-		return nil, fmt.Errorf("upscale: %w", err)
+		return nil, fmt.Errorf("resize: %w", err)
 	}
 	scale := params.Scale
 	if scale == 0 {
 		scale = 4
 	}
-	if scale < 1.5 || scale > 16 {
-		return nil, fmt.Errorf("upscale: scale must be in [1.5, 16], got %g", scale)
+	if scale < 0.1 || scale > 16 {
+		return nil, fmt.Errorf("resize: scale must be in [0.1, 16], got %g", scale)
 	}
 	method := params.Method
 	if method == "" {
@@ -56,30 +57,30 @@ func upscale(ctx context.Context, ffmpegBin, ffprobeBin string, req Request) ([]
 	}
 	if !allowedMethods[method] {
 		known := []string{"lanczos", "bicubic", "bilinear", "neighbor"}
-		return nil, fmt.Errorf("upscale: unknown method %q (known: %s)", method, strings.Join(known, ", "))
+		return nil, fmt.Errorf("resize: unknown method %q (known: %s)", method, strings.Join(known, ", "))
 	}
 
 	job, err := stageInput(req, req.Media.Format, "")
 	if err != nil {
-		return nil, fmt.Errorf("upscale: %w", err)
+		return nil, fmt.Errorf("resize: %w", err)
 	}
 	defer job.cleanup()
 
 	kind, probed, err := Probe(ctx, ffprobeBin, job.inPath)
 	if err != nil {
-		return nil, fmt.Errorf("upscale: %w", err)
+		return nil, fmt.Errorf("resize: %w", err)
 	}
 
 	if kind == KindAudio {
-		return nil, fmt.Errorf("upscale: doesn't apply to audio")
+		return nil, fmt.Errorf("resize: doesn't apply to audio")
 	}
 	if kind == KindUnknown {
-		return nil, fmt.Errorf("upscale: could not classify input (format=%q)", probed.Format.FormatName)
+		return nil, fmt.Errorf("resize: could not classify input (format=%q)", probed.Format.FormatName)
 	}
 
 	inW, inH, err := videoStreamDims(probed)
 	if err != nil {
-		return nil, fmt.Errorf("upscale: %w", err)
+		return nil, fmt.Errorf("resize: %w", err)
 	}
 	outW := makeEven(int(float64(inW) * scale))
 	outH := makeEven(int(float64(inH) * scale))
@@ -87,12 +88,12 @@ func upscale(ctx context.Context, ffmpegBin, ffprobeBin string, req Request) ([]
 	vf := fmt.Sprintf("scale=%d:%d:flags=%s", outW, outH, method)
 
 	if kind == KindImage {
-		return upscaleImage(ctx, ffmpegBin, job, vf, probed)
+		return resizeImage(ctx, ffmpegBin, job, vf, probed)
 	}
-	return upscaleVideo(ctx, ffmpegBin, job, vf, probed)
+	return resizeVideo(ctx, ffmpegBin, job, vf, probed)
 }
 
-func upscaleImage(ctx context.Context, ffmpegBin string, job *stagedJob, vf string, probed *ffprobeResult) ([]Output, error) {
+func resizeImage(ctx context.Context, ffmpegBin string, job *stagedJob, vf string, probed *ffprobeResult) ([]Output, error) {
 	outFmt := imageOutFormat(compressParams{}, probed)
 	job.outPath = job.outPath + "." + outFmt
 	args := []string{
@@ -120,7 +121,7 @@ func upscaleImage(ctx context.Context, ffmpegBin string, job *stagedJob, vf stri
 	return []Output{{MediaB64: b64, Format: outFmt, ExecMS: execMS}}, nil
 }
 
-func upscaleVideo(ctx context.Context, ffmpegBin string, job *stagedJob, vf string, probed *ffprobeResult) ([]Output, error) {
+func resizeVideo(ctx context.Context, ffmpegBin string, job *stagedJob, vf string, probed *ffprobeResult) ([]Output, error) {
 	outFmt := videoOutFormat(compressParams{}, probed)
 	job.outPath = job.outPath + "." + outFmt
 	codec := "h264_nvenc"
@@ -146,8 +147,8 @@ func upscaleVideo(ctx context.Context, ffmpegBin string, job *stagedJob, vf stri
 	return []Output{{MediaB64: b64, Format: outFmt, ExecMS: execMS}}, nil
 }
 
-func parseUpscaleParams(raw map[string]any) (upscaleParams, error) {
-	var p upscaleParams
+func parseResizeParams(raw map[string]any) (resizeParams, error) {
+	var p resizeParams
 	if v, ok := raw["scale"]; ok {
 		f, err := toFloat(v)
 		if err != nil {
