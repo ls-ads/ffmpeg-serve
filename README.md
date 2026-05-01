@@ -81,15 +81,23 @@ internally (image / video / audio handler picked from `ffprobe`
 output). Verbs that don't apply to a given media type return a clear
 error before any work runs.
 
-Phase A (this commit) ships only `noop` — proves the wire end-to-end
-without any actual ffmpeg work. Real transforms land in subsequent
-phases:
+Phase A shipped `noop` (proves the wire). Phase B shipped Tier 1:
 
-**Tier 1 (next):** `compress`, `reframe`, `convert` (covers gif↔mp4
-and every other format-conversion case), `normalize` (audio LUFS),
-`upscale --method=lanczos`.
+| Verb | Image | Video | Audio |
+|---|:---:|:---:|:---:|
+| `compress` — size-targeted re-encode (Discord/WhatsApp/X presets) | ✓ | ✓ | ✓ |
+| `reframe` — aspect-ratio change with blur-pad / letterbox / crop | ✓ | ✓ | — |
+| `convert` — format conversion (covers gif↔mp4) | ✓ | ✓ | ✓ |
+| `normalize` — EBU R128 audio loudness | — | ✓ (audio track) | ✓ |
+| `upscale` — lanczos / bicubic / bilinear / neighbor | ✓ | ✓ | — |
+| `noop` — echo input bytes (smoke test) | ✓ | ✓ | ✓ |
 
-**Tier 2:** `trim`, `speed`, `extract-audio`, `silence-remove`.
+The AI super-resolution path lives in
+[real-esrgan-serve](https://github.com/ls-ads/real-esrgan-serve);
+iosuite's `upscale` command picks between `--method=real-esrgan`
+(default) and `--method=lanczos|bicubic|...` (this repo).
+
+**Tier 2 (next):** `trim`, `speed`, `extract-audio`, `silence-remove`.
 
 **Tier 3 (later):** `subtitle-burn`, `watermark` (add-only),
 `color-lut`, `denoise`.
