@@ -62,6 +62,8 @@ type ffprobeResult struct {
 		CodecType string `json:"codec_type"`
 		CodecName string `json:"codec_name"`
 		NbFrames  string `json:"nb_frames"`
+		Width     int    `json:"width"`
+		Height    int    `json:"height"`
 	} `json:"streams"`
 }
 
