@@ -15,6 +15,7 @@ import (
 	"os"
 
 	"github.com/ls-ads/ffmpeg-serve/internal/server"
+	"github.com/ls-ads/ffmpeg-serve/internal/transforms"
 	"github.com/spf13/cobra"
 )
 
@@ -35,6 +36,7 @@ worker iosuite shells out to. See ARCHITECTURE.md for the full design.`,
 	}
 
 	root.AddCommand(server.Command())
+	root.AddCommand(transforms.Command())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
