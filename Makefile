@@ -1,32 +1,65 @@
-BINARY_NAME=ffmpeg-serve
-BIN_DIR=bin
+.PHONY: build clean fmt vet test install \
+        docker-cpu docker-cuda \
+        docker-push-cpu docker-push-cuda \
+        validate-manifest
 
-platforms := linux windows darwin
-architectures := amd64 arm64
+BIN_DIR ?= bin
+VERSION ?= $(shell git describe --tags --dirty --always 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 
+LDFLAGS = -s -w \
+          -X main.version=$(VERSION) \
+          -X main.commit=$(COMMIT)
+
+# Pure-Go build. The Go binary itself shells out to ffmpeg + ffprobe,
+# so the binary has no native dependencies and cross-compiles cleanly.
 build:
-	go build -o $(BIN_DIR)/$(BINARY_NAME) main.go
+	@mkdir -p $(BIN_DIR)
+	CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" \
+	    -o $(BIN_DIR)/ffmpeg-serve ./cmd/ffmpeg-serve
 
-build-all: $(foreach p,$(platforms),$(foreach a,$(architectures),build-$(p)-$(a)))
+clean:
+	rm -rf $(BIN_DIR)
 
-# Template for dynamic target generation
-define BUILD_TARGET
-build-$(1)-$(2):
-	GOOS=$(1) GOARCH=$(2) go build -o $(BIN_DIR)/$(BINARY_NAME)-$(1)-$(2)$(if $(filter windows,$(1)),.exe,) main.go
-endef
+fmt:
+	go fmt ./...
 
-# Generate targets for all platform/architecture combinations
-$(foreach p,$(platforms),$(foreach a,$(architectures),$(eval $(call BUILD_TARGET,$(p),$(a)))))
+vet:
+	go vet ./...
 
 test:
 	go test ./...
 
-clean:
-	rm -rf $(BIN_DIR)
-	rm -f /tmp/ffmpeg_serve.pid
+install: build
+	install -m 0755 $(BIN_DIR)/ffmpeg-serve /usr/local/bin/ffmpeg-serve
 
-run: build
-	./$(BIN_DIR)/$(BINARY_NAME)
+# CI gate. The same script runs on every push to deploy/** so a
+# manifest typo is caught before iosuite tries to fetch it.
+validate-manifest:
+	python3 build/validate_manifest.py
 
-server: build
-	./$(BIN_DIR)/$(BINARY_NAME) server start
+# ----------------------------------------------------------------------
+# Docker images. Two flavours: cpu (LGPL FFmpeg, no NVIDIA) and cuda
+# (LGPL FFmpeg + NVENC). See Dockerfile comments + NOTICE.md for the
+# license posture; both stay Apache-2.0-distributable.
+# ----------------------------------------------------------------------
+
+docker-cpu:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) \
+	    -f Dockerfile.cpu \
+	    -t ffmpeg-serve:cpu-$(VERSION) .
+
+docker-cuda:
+	docker build --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) \
+	    -f Dockerfile.cuda \
+	    -t ffmpeg-serve:cuda-$(VERSION) .
+
+docker-push-cpu: docker-cpu
+	docker tag ffmpeg-serve:cpu-$(VERSION) ghcr.io/ls-ads/ffmpeg-serve:cpu-$(VERSION)
+	docker push ghcr.io/ls-ads/ffmpeg-serve:cpu-$(VERSION)
+	@echo "pushed: ghcr.io/ls-ads/ffmpeg-serve:cpu-$(VERSION)"
+
+docker-push-cuda: docker-cuda
+	docker tag ffmpeg-serve:cuda-$(VERSION) ghcr.io/ls-ads/ffmpeg-serve:cuda-$(VERSION)
+	docker push ghcr.io/ls-ads/ffmpeg-serve:cuda-$(VERSION)
+	@echo "pushed: ghcr.io/ls-ads/ffmpeg-serve:cuda-$(VERSION)"

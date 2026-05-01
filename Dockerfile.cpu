@@ -1,0 +1,60 @@
+# ffmpeg-serve runtime image — CPU flavour.
+#
+# Apache-2.0 distribution. The base image carries an LGPL-only build
+# of FFmpeg (no `--enable-gpl`, no `--enable-nonfree`). Software
+# encoders only: libvpx (VP9, BSD), libaom (AV1, BSD), libwebp (BSD).
+# No libx264 / libx265 / libxvid / libfdk-aac.
+#
+# See NOTICE.md for the full third-party-licence catalogue.
+#
+# Sizing (approximate):
+#   ubuntu:22.04                  ~ 78 MB
+#   ffmpeg + libs (LGPL build)    ~250 MB
+#   Go binary (CGO=0, stripped)   ~ 15 MB
+#   ──────────────────────────────────────
+#                          Total  ~340 MB
+#
+# Build:
+#   make docker-cpu
+# Run:
+#   docker run --rm -p 8313:8313 ffmpeg-serve:cpu-dev serve --bind 0.0.0.0
+
+# ─── Stage 1: build the Go binary ─────────────────────────────────
+FROM golang:1.25-alpine AS gobuild
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/      ./cmd/
+COPY internal/ ./internal/
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags "-s -w \
+            -X main.version=${VERSION} \
+            -X main.commit=${COMMIT}" \
+        -o /out/ffmpeg-serve ./cmd/ffmpeg-serve
+
+# ─── Stage 2: runtime ─────────────────────────────────────────────
+FROM ubuntu:22.04
+
+# Install LGPL FFmpeg from Ubuntu's package repository. The packaged
+# build excludes GPL components by default on this base — see
+# https://launchpad.net/ubuntu/+source/ffmpeg for the configure
+# flags. NOTICE.md catalogues the linked-against codecs and their
+# licences; whenever the base image rev'd, audit that file for drift.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gobuild /out/ffmpeg-serve /usr/local/bin/ffmpeg-serve
+
+# Apache-2.0 attribution requirements: ship LICENSE + NOTICE.md
+# inside the container so operators can read them without cloning.
+COPY LICENSE   /usr/share/doc/ffmpeg-serve/LICENSE
+COPY NOTICE.md /usr/share/doc/ffmpeg-serve/NOTICE.md
+
+EXPOSE 8313
+ENTRYPOINT ["ffmpeg-serve"]
+CMD ["serve", "--bind", "0.0.0.0", "--port", "8313"]

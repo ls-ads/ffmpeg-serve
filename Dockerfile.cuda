@@ -1,0 +1,69 @@
+# ffmpeg-serve runtime image — CUDA flavour with NVENC.
+#
+# Apache-2.0 distribution. The FFmpeg binary in this image is
+# LGPL-only (no `--enable-gpl`). Hardware video encoding goes through
+# NVIDIA's NVENC SDK — its FFmpeg binding is LGPL, and NVENC itself
+# is licensed under the NVIDIA Software Development Kit EULA. No GPL
+# components are linked or redistributed.
+#
+# Software fallback codecs (when no GPU is available or the operator
+# disables NVENC): libvpx (VP9, BSD), libaom (AV1, BSD).
+#
+# See NOTICE.md for the full third-party-licence catalogue.
+#
+# Sizing (approximate):
+#   nvidia/cuda:12.8.0-runtime    ~ 800 MB
+#   ffmpeg + libs (LGPL build)    ~250 MB
+#   Go binary (CGO=0, stripped)   ~ 15 MB
+#   ──────────────────────────────────────
+#                          Total  ~1.1 GB
+#
+# Build:
+#   make docker-cuda
+# Run (requires --gpus all on a host with the NVIDIA container toolkit):
+#   docker run --rm --gpus all -p 8313:8313 ffmpeg-serve:cuda-dev
+
+# ─── Stage 1: build the Go binary ─────────────────────────────────
+FROM golang:1.25-alpine AS gobuild
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/      ./cmd/
+COPY internal/ ./internal/
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build \
+        -trimpath \
+        -ldflags "-s -w \
+            -X main.version=${VERSION} \
+            -X main.commit=${COMMIT}" \
+        -o /out/ffmpeg-serve ./cmd/ffmpeg-serve
+
+# ─── Stage 2: runtime ─────────────────────────────────────────────
+# 12.8.0-runtime to match the NVENC SDK that's linked against, and to
+# satisfy the `min_cuda_version` we declare in deploy/runpod.json.
+FROM nvidia/cuda:12.8.0-runtime-ubuntu22.04
+
+# FFmpeg from Ubuntu's package archive. The Ubuntu build is LGPL by
+# default (no `--enable-gpl`) and includes the `nvenc` configure flag
+# at packaging time. At runtime, FFmpeg discovers libnvidia-encode.so
+# via the NVIDIA container toolkit's mount.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=gobuild /out/ffmpeg-serve /usr/local/bin/ffmpeg-serve
+COPY LICENSE   /usr/share/doc/ffmpeg-serve/LICENSE
+COPY NOTICE.md /usr/share/doc/ffmpeg-serve/NOTICE.md
+
+# Surface the GPU capabilities to the container runtime so users
+# don't have to remember the flags. The NVIDIA container toolkit
+# reads NVIDIA_VISIBLE_DEVICES + NVIDIA_DRIVER_CAPABILITIES at
+# container start.
+ENV NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+
+EXPOSE 8313
+ENTRYPOINT ["ffmpeg-serve"]
+CMD ["serve", "--bind", "0.0.0.0", "--port", "8313"]

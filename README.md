@@ -1,95 +1,137 @@
-# FFmpeg Serve
+# ffmpeg-serve
 
-A standalone Go CLI tool using Cobra that wraps FFmpeg for local media processing and provides a persistent HTTP server for remote processing.
+FFmpeg-backed transform daemon for the [iosuite](https://github.com/ls-ads/iosuite)
+ecosystem. Runs image / video / audio transforms locally (Go binary
+subprocesses the system `ffmpeg` + `ffprobe`) or as a RunPod
+serverless template that the iosuite CLI deploys + tears down on
+demand.
 
-This tool is designed to support both "one-shot" local transcoding and a persistent REST API for media transformations.
+The user-facing CLI is `iosuite`. Reach for this repo if you want to:
 
-## Installation Requirements
+- Self-host transforms on your own GPU box, with or without iosuite.
+- Add a new transform (single Go file + a tiny manifest entry).
+- Build an alternative runtime image flavour.
 
-This project requires `ffmpeg` and `ffprobe` to be installed on your system.
+## License posture
 
-- Go 1.20+
-- FFmpeg (with required codecs)
-- FFprobe (part of the FFmpeg suite)
+Apache-2.0. The runtime image distribution stays Apache-2.0-clean by
+**building LGPL-only FFmpeg** (no `--enable-gpl`, no
+`--enable-nonfree`) and using **NVIDIA NVENC** for hardware video
+encoding — NVENC's FFmpeg binding is LGPL, NVENC itself is licensed
+under NVIDIA's SDK EULA.
 
-Build the CLI using the provided `Makefile`:
+What we don't ship: libx264, libx265, libxvid, libfdk-aac, vidstab.
+What we do: NVENC (H.264/H.265/AV1 hardware), libvpx (VP9, BSD),
+libaom (AV1, BSD), libwebp (BSD), the LGPL FFmpeg native codecs.
 
-```bash
-make build
-```
+Full third-party catalogue: [`NOTICE.md`](./NOTICE.md).
 
-This will output the `ffmpeg-serve` binary.
+## Quick start (local)
 
-## Usage
-
-### 1. Local Processing (File or Directory)
-
-```bash
-# Process a single video using GPU 0 (NVENC)
-./ffmpeg-serve -i path/to/video.mp4 -o path/to/output.mkv -g 0 -- -c:v h264_nvenc -preset p4
-
-# Process a directory of images (example: convert to webp)
-./ffmpeg-serve -i path/to/input_dir -o path/to/output_dir -- -c:v libwebp -lossless 1
-```
-
-- `-i`, `--input`: The input file path or directory path.
-- `-o`, `--output`: The output file path or directory path. 
-- `-g`, `--gpu-id`: (Optional) The GPU device ID to use for hardware acceleration (default: -1, disabled).
-- `--`: Any arguments following the double-dash are passed directly to FFmpeg.
-
-### 2. HTTP Server
+Requirements: `ffmpeg` + `ffprobe` on `$PATH` (Linux: `apt install
+ffmpeg` or equivalent; macOS: `brew install ffmpeg`). Go 1.25+ if
+building from source.
 
 ```bash
-# Start the server using GPU 0
-./ffmpeg-serve server start -p 8080 -g 0
+git clone https://github.com/ls-ads/ffmpeg-serve
+cd ffmpeg-serve
+make build               # → ./bin/ffmpeg-serve
+
+# Run as a daemon. Picks up ffmpeg/ffprobe from $PATH.
+./bin/ffmpeg-serve serve --bind 0.0.0.0 --port 8313
 ```
 
-### Direct API Usage (cURL)
-
-Once the server is running, you can send media directly to the API endpoints using standard HTTP multipart form requests.
-
-#### Process Media (`/process`)
-
-Send a file and specify FFmpeg arguments via the `args` query parameter (comma-separated).
+## Quick start (Docker)
 
 ```bash
-# Transcode a video to H.264
-curl -X POST -F "file=@video.mp4" "http://localhost:8080/process?args=-c:v,libx264,-preset,fast" -o output.mp4
+make docker-cpu           # ~340 MB, no GPU dep
+make docker-cuda          # ~1.1 GB, NVIDIA + NVENC hardware encode
+
+# Run the cuda flavour (requires --gpus all + nvidia-container-toolkit):
+docker run --rm --gpus all -p 8313:8313 ffmpeg-serve:cuda-dev
 ```
 
-#### Probe Media (`/probe`)
+## Wire shape
 
-Get metadata about a media file in JSON format.
+The daemon speaks the same JSON envelope as iosuite serve and
+real-esrgan-serve. iosuite serve is opaque pass-through, so this
+envelope flows from iosuite-api straight to here:
 
-```bash
-curl -X POST -F "file=@video.mp4" "http://localhost:8080/probe"
+```
+POST /runsync   Content-Type: application/json
+{"input": {
+  "transform": "compress",                  # verb name
+  "params":    {"target": "discord-10mb"},  # transform-specific
+  "media":     {"input_b64": "...", "format": "mp4"}
+}}
+
+→ {"status": "COMPLETED",
+   "output": {"outputs": [
+     {"media_b64": "...", "format": "mp4", "exec_ms": 2840}
+   ]}}
 ```
 
-#### Health Check (`/health`)
+`GET /health` returns `{"status":"ok"}` once `ffmpeg` + `ffprobe`
+are resolved.
 
-```bash
-curl http://localhost:8080/health
+## Transforms
+
+The wire is one verb per transform; the daemon dispatches by mime
+internally (image / video / audio handler picked from `ffprobe`
+output). Verbs that don't apply to a given media type return a clear
+error before any work runs.
+
+Phase A (this commit) ships only `noop` — proves the wire end-to-end
+without any actual ffmpeg work. Real transforms land in subsequent
+phases:
+
+**Tier 1 (next):** `compress`, `reframe`, `gif` ↔ `mp4` round-trip,
+`normalize` (audio LUFS), `upscale --method=lanczos`.
+
+**Tier 2:** `convert`, `trim`, `speed`, `extract-audio`,
+`silence-remove`.
+
+**Tier 3 (later):** subtitle burn-in, watermark addition, color LUTs,
+noise reduction.
+
+## Deploy manifests
+
+`deploy/runpod.json` is the source-of-truth for how iosuite deploys
+this module to RunPod: image tag, container disk, GPU pool map per
+class, FlashBoot default, CUDA pin, env vars. iosuite reads it at
+deploy time — bumping any of those fields lands here, not in iosuite.
+
+Field reference: [`deploy/SCHEMA.md`](./deploy/SCHEMA.md).
+Validator (CI gate): [`build/validate_manifest.py`](./build/validate_manifest.py).
+
+## Repo layout
+
+```
+ffmpeg-serve/
+├── ARCHITECTURE.md           design rationale and contracts
+├── cmd/ffmpeg-serve/         Go CLI entry point
+├── internal/
+│   ├── server/               HTTP daemon (POST /runsync)
+│   ├── transforms/           one Go file per transform handler
+│   └── runtime/              ffmpeg + ffprobe locator
+├── deploy/                   iosuite-readable deploy manifest
+├── build/                    manifest validator (CI gate)
+├── Dockerfile.cpu            ubuntu + LGPL FFmpeg
+├── Dockerfile.cuda           ubuntu + LGPL FFmpeg + NVENC
+└── tests/
 ```
 
-## Docker
+## Documentation
 
-If you don't want to manage FFmpeg dependencies on your host, you can run the entire tool via Docker.
-
-**1. Build the Image:**
-```bash
-docker build -t ffmpeg-serve:v1 .
-```
-
-**2. Local Processing:**
-```bash
-docker run --rm -v $(pwd):/workspace ffmpeg-serve:v1 -i /workspace/input.mp4 -o /workspace/output.mp4
-```
-
-**3. HTTP Server:**
-```bash
-docker run -d -p 8080:8080 ffmpeg-serve:v1 server start -p 8080
-```
+- iosuite CLI reference (the user-facing surface for these
+  transforms): <https://iosuite.io/cli-docs>
+- Architecture: [`ARCHITECTURE.md`](./ARCHITECTURE.md)
+- Manifest schema: [`deploy/SCHEMA.md`](./deploy/SCHEMA.md)
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Apache-2.0. See [`LICENSE`](./LICENSE) for the text and
+[`NOTICE.md`](./NOTICE.md) for third-party attributions
+(FFmpeg LGPL, NVIDIA NVENC + CUDA EULAs, libvpx / libaom / libwebp
+BSD, et al). When forking or vendoring, preserve `LICENSE` and
+`NOTICE.md`.
