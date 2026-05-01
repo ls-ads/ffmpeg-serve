@@ -85,14 +85,14 @@ Phase A (this commit) ships only `noop` — proves the wire end-to-end
 without any actual ffmpeg work. Real transforms land in subsequent
 phases:
 
-**Tier 1 (next):** `compress`, `reframe`, `gif` ↔ `mp4` round-trip,
-`normalize` (audio LUFS), `upscale --method=lanczos`.
+**Tier 1 (next):** `compress`, `reframe`, `convert` (covers gif↔mp4
+and every other format-conversion case), `normalize` (audio LUFS),
+`upscale --method=lanczos`.
 
-**Tier 2:** `convert`, `trim`, `speed`, `extract-audio`,
-`silence-remove`.
+**Tier 2:** `trim`, `speed`, `extract-audio`, `silence-remove`.
 
-**Tier 3 (later):** subtitle burn-in, watermark addition, color LUTs,
-noise reduction.
+**Tier 3 (later):** `subtitle-burn`, `watermark` (add-only),
+`color-lut`, `denoise`.
 
 ## Deploy manifests
 
