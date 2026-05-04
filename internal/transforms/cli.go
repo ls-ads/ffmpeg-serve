@@ -36,12 +36,13 @@ can subprocess this rather than spinning up a daemon per invocation.`,
 			paramsJSON, _ := cmd.Flags().GetString("params")
 			ffmpegOverride, _ := cmd.Flags().GetString("ffmpeg")
 			ffprobeOverride, _ := cmd.Flags().GetString("ffprobe")
+			auxPaths, _ := cmd.Flags().GetStringSlice("aux")
 
 			if input == "" {
 				return fmt.Errorf("--input is required")
 			}
 			return runOnce(cmd.Context(), args[0], input, output, paramsJSON,
-				ffmpegOverride, ffprobeOverride)
+				ffmpegOverride, ffprobeOverride, auxPaths)
 		},
 	}
 	cmd.Flags().StringP("input", "i", "", "Input file path (required)")
@@ -49,6 +50,7 @@ can subprocess this rather than spinning up a daemon per invocation.`,
 	cmd.Flags().String("params", "{}", "Transform-specific params as a JSON object string")
 	cmd.Flags().String("ffmpeg", "", "Override path to ffmpeg")
 	cmd.Flags().String("ffprobe", "", "Override path to ffprobe")
+	cmd.Flags().StringSlice("aux", nil, "Secondary input file path (repeatable). Used by subtitle-burn, watermark, color-lut.")
 	return cmd
 }
 
@@ -56,7 +58,7 @@ can subprocess this rather than spinning up a daemon per invocation.`,
 // HTTP daemon receives (input_b64), invokes the registered handler,
 // writes the output bytes to disk. Errors are returned to the cobra
 // layer for stderr formatting.
-func runOnce(ctx context.Context, name, inputPath, outputPath, paramsJSON, ffmpegOverride, ffprobeOverride string) error {
+func runOnce(ctx context.Context, name, inputPath, outputPath, paramsJSON, ffmpegOverride, ffprobeOverride string, auxPaths []string) error {
 	handler, ok := Lookup(name)
 	if !ok {
 		return &ErrUnknownTransform{Name: name}
@@ -89,6 +91,20 @@ func runOnce(ctx context.Context, name, inputPath, outputPath, paramsJSON, ffmpe
 			InputB64: base64.StdEncoding.EncodeToString(rawIn),
 			Format:   strings.TrimPrefix(filepath.Ext(inputPath), "."),
 		},
+	}
+
+	// Read each aux file, base64-encode, populate req.Aux. Same
+	// ingestion shape the HTTP path uses — handlers don't see a
+	// distinction between aux from CLI vs aux from JSON.
+	for _, ap := range auxPaths {
+		raw, err := os.ReadFile(ap)
+		if err != nil {
+			return fmt.Errorf("read aux %s: %w", ap, err)
+		}
+		req.Aux = append(req.Aux, Media{
+			InputB64: base64.StdEncoding.EncodeToString(raw),
+			Format:   strings.TrimPrefix(filepath.Ext(ap), "."),
+		})
 	}
 
 	outputs, err := handler(ctx, resolved.FFmpeg, resolved.FFprobe, req)
@@ -141,12 +157,18 @@ func derivedOutputPath(input, verb, outputFormat string) string {
 	stem := strings.TrimSuffix(base, filepath.Ext(base))
 
 	suffix := map[string]string{
-		"compress":  "_compressed",
-		"reframe":   "_reframed",
-		"normalize": "_normalized",
-		"resize":    "_resized",
-		"trim":      "_trimmed",
-		"speed":     "_speed",
+		"compress":      "_compressed",
+		"reframe":       "_reframed",
+		"normalize":     "_normalized",
+		"resize":        "_resized",
+		"trim":          "_trimmed",
+		"speed":         "_speed",
+		"extract-audio": "_audio",
+		"silence-remove": "_dehushed",
+		"denoise":        "_denoised",
+		"subtitle-burn":  "_subtitled",
+		"watermark":      "_watermarked",
+		"color-lut":      "_graded",
 	}[verb]
 	if suffix == "" {
 		suffix = "_" + verb
