@@ -57,6 +57,59 @@ func stageInput(req Request, inputExt, outputExt string) (*stagedJob, error) {
 	}, nil
 }
 
+// stageAux writes each Aux entry into the same tmpdir as the
+// primary input, returning the on-disk paths in the same order.
+// Callers reference these paths in the ffmpeg arg list (e.g.,
+// `-i <auxPath>` for an overlay image, or `-vf
+// "subtitles=<auxPath>"` for a hardcoded subtitle file).
+//
+// Each aux entry's Format determines the file extension; missing
+// formats default to ".bin" since ffmpeg sniffs by content for
+// most cases. Caller MUST have already created `job` via
+// stageInput so the tmpdir exists.
+func stageAux(job *stagedJob, aux []Media) ([]string, error) {
+	if len(aux) == 0 {
+		return nil, nil
+	}
+	paths := make([]string, len(aux))
+	for i, m := range aux {
+		raw, err := decodeAuxBytes(m)
+		if err != nil {
+			return nil, fmt.Errorf("aux[%d]: %w", i, err)
+		}
+		ext := normalizeExt(m.Format)
+		if ext == "" {
+			ext = ".bin"
+		}
+		path := filepath.Join(job.tmpDir, fmt.Sprintf("aux_%d%s", i, ext))
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			return nil, fmt.Errorf("write aux[%d]: %w", i, err)
+		}
+		paths[i] = path
+	}
+	return paths, nil
+}
+
+// decodeAuxBytes mirrors decodeMediaBytes for the aux slice — only
+// input_b64 supported, data-URL prefix tolerated.
+func decodeAuxBytes(m Media) ([]byte, error) {
+	if m.InputB64 == "" {
+		if m.InputURL != "" || m.InputPath != "" {
+			return nil, errors.New("aux input_url and input_path are not supported yet — use input_b64")
+		}
+		return nil, errors.New("aux input_b64 is required")
+	}
+	s := m.InputB64
+	if i := strings.Index(s, ","); i >= 0 && strings.HasPrefix(s, "data:") {
+		s = s[i+1:]
+	}
+	raw, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("decode input_b64: %w", err)
+	}
+	return raw, nil
+}
+
 // runFFmpeg executes ffmpeg with the given args, returning stderr on
 // failure (which is where ffmpeg writes its actual error messages).
 // stdout is captured but discarded — we read the encoded output via

@@ -31,10 +31,18 @@ import (
 // HTTP layer). Handlers receive a Request and return one Output per
 // produced artifact (single-item slice for most transforms; batch
 // transforms can return multiple).
+//
+// Aux carries optional secondary inputs — used by transforms that
+// need a second media file alongside the primary one. Examples:
+// subtitle-burn (the .srt/.vtt file), watermark (the overlay
+// image), color-lut (the .cube file). Handlers ignore the slice
+// they don't need and the wire stays the same shape across every
+// verb.
 type Request struct {
 	Transform string         `json:"transform"`
 	Params    map[string]any `json:"params,omitempty"`
 	Media     Media          `json:"media"`
+	Aux       []Media        `json:"aux,omitempty"`
 }
 
 // Media carries the input bytes + a format hint. `input_b64` is the
